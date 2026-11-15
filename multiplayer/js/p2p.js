@@ -1,6 +1,27 @@
 // Dual Cube Timer V5 - Serverless WebRTC P2P Engine (PeerJS)
 (function (global) {
     const PEER_PREFIX = 'dct-v5-room-';
+    const ICE_CONFIG = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            {
+                urls: 'turn:openrelay.metered.ca:80',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turn:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turns:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            }
+        ]
+    };
 
     function generateRoomCode() {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -59,7 +80,7 @@
                 return;
             }
 
-            this.peer = new Peer(peerId, { debug: 0 });
+            this.peer = new Peer(peerId, { debug: 0, config: ICE_CONFIG });
 
             this.peer.on('open', () => {
                 this.emit('room-created', {
@@ -94,7 +115,7 @@
                 return;
             }
 
-            this.peer = new Peer(undefined, { debug: 0 });
+            this.peer = new Peer(undefined, { debug: 0, config: ICE_CONFIG });
 
             this.peer.on('open', () => {
                 this.conn = this.peer.connect(PEER_PREFIX + this.roomCode, { reliable: true });
@@ -102,7 +123,11 @@
             });
 
             this.peer.on('error', (err) => {
-                this.emit('error', err.message || 'Could not join room. Check the code or host status.');
+                if (err.type === 'peer-unavailable') {
+                    this.emit('error', 'Room not found or host is offline. Make sure the host tab is still open!');
+                } else {
+                    this.emit('error', err.message || 'Could not join room. Check the code or host status.');
+                }
             });
         },
 
