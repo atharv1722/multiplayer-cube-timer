@@ -1677,7 +1677,7 @@
     <main class="flex-grow flex flex-col lg:flex-row p-2 sm:p-4 gap-4 pre-game main-content-transition relative z-10">
         <div id="player1-zone" class="timer-zone state-idle w-full lg:w-1/3 h-64 lg:h-auto bg-gray-800 rounded-2xl flex flex-col justify-center items-center p-4 cursor-pointer relative">
             <h2 id="player1-name" class="absolute top-4 left-4 text-xl font-bold text-gray-400">Player 1</h2>
-            <div class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-mono uppercase tracking-widest text-gray-500/80 pointer-events-none whitespace-nowrap">
+            <div id="player1-key-hint" class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-mono uppercase tracking-widest text-gray-500/80 pointer-events-none whitespace-nowrap">
                 SPACE: Start/Stop &middot; A: Penalty / Reset
             </div>
             <div id="player1-timer" class="time-display text-6xl sm:text-8xl font-bold">0.00</div>
@@ -1798,7 +1798,7 @@
 
         <div id="player2-zone" class="timer-zone state-idle w-full lg:w-1/3 h-64 lg:h-auto bg-gray-800 rounded-2xl flex flex-col justify-center items-center p-4 cursor-pointer relative">
             <h2 id="player2-name" class="absolute top-4 right-4 text-xl font-bold text-gray-400">Player 2</h2>
-            <div class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-mono uppercase tracking-widest text-gray-500/80 pointer-events-none whitespace-nowrap">
+            <div id="player2-key-hint" class="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-mono uppercase tracking-widest text-gray-500/80 pointer-events-none whitespace-nowrap">
                 ENTER: Start/Stop &middot; J: Penalty / Reset
             </div>
             <div id="player2-timer" class="time-display text-6xl sm:text-8xl font-bold">0.00</div>
@@ -2697,6 +2697,9 @@
         }
 
         function triggerGameStartSequence() {
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                document.activeElement.blur();
+            }
             dom.welcomeModal.style.opacity = 0;
             setTimeout(() => dom.welcomeModal.classList.add('hidden'), 500);
             const loader = document.getElementById('loading-screen');
@@ -2712,12 +2715,25 @@
         }
 
         function startGame() {
+            if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                document.activeElement.blur();
+            }
             players[0].nameEl.textContent = players[0].name; 
             players[1].nameEl.textContent = players[1].name;
             const p1Lbl = document.getElementById('p1-avg-label');
             const p2Lbl = document.getElementById('p2-avg-label');
             if (p1Lbl) p1Lbl.textContent = players[0].name;
             if (p2Lbl) p2Lbl.textContent = players[1].name;
+            if (window.DCT_P2P && DCT_P2P.enabled) {
+                const myIdx = DCT_P2P.isHost ? 0 : 1;
+                const oppIdx = DCT_P2P.isHost ? 1 : 0;
+                if (players[myIdx].zone) players[myIdx].zone.classList.remove('online-locked-zone');
+                if (players[oppIdx].zone) players[oppIdx].zone.classList.add('online-locked-zone');
+                const myHint = document.getElementById(`player${myIdx + 1}-key-hint`);
+                const oppHint = document.getElementById(`player${oppIdx + 1}-key-hint`);
+                if (myHint) myHint.innerHTML = 'YOU &bull; SPACE / ENTER or TAP &middot; A: Penalty';
+                if (oppHint) oppHint.innerHTML = 'OPPONENT &bull; LIVE SYNC';
+            }
             setGameMode(state.gameMode);
             dom.mainContent.classList.remove('pre-game'); 
             dom.mainContent.classList.add('game-started'); 
@@ -2947,13 +2963,20 @@
                 }
             }
             if (window.DCT_P2P && DCT_P2P.enabled && !DCT_P2P.isHost) {
+                if (state.pendingRemoteScramble && state.pendingRemoteScramble.scramble) {
+                    const pending = state.pendingRemoteScramble;
+                    state.pendingRemoteScramble = null;
+                    if (pending.gameMode) setGameMode(pending.gameMode);
+                    applyScrambleString(pending.scramble);
+                    return;
+                }
                 const scrambleEl = document.getElementById('scramble-text');
                 if (scrambleEl) scrambleEl.textContent = 'Waiting for host scramble...';
                 return;
             }
             const scramble = generateScrambleAlgorithm();
             if (window.DCT_P2P && DCT_P2P.enabled && DCT_P2P.isHost) {
-                DCT_P2P.send({ type: 'SCRAMBLE', scramble, gameMode: state.gameMode });
+                DCT_P2P.send({ type: 'SCRAMBLE', scramble, gameMode: state.gameMode, round: state.currentRound });
             }
             applyScrambleString(scramble);
         }
@@ -2998,8 +3021,11 @@
                             player.lastRenderedInspText = '+2';
                         }
                     } else {
-                        player.solveTime = Infinity;
-                        stopSolve(player);
+                        const isRemoteOpp = window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2);
+                        if (!isRemoteOpp) {
+                            player.solveTime = Infinity;
+                            stopSolve(player);
+                        }
                     }
                 } else if (player.status === 'solving') {
                     anyActive = true;
@@ -3034,6 +3060,7 @@
                 player.touchPads.bottom.classList.remove('touched', 'set');
             }
             function onPointerDown(e) {
+                if (window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
                 if (e.target && e.target.closest('button, input, select, a')) return;
                 e.preventDefault();
                 if (!['playing', 'ao5_preview', 'bonus_preview', 'end_preview'].includes(state.gameState)) return;
@@ -3069,6 +3096,7 @@
                 }
             }
             function onPointerUp(e) {
+                if (window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
                 if (e.target && e.target.closest('button, input, select, a')) return;
                 e.preventDefault();
                 if (!['playing', 'ao5_preview', 'bonus_preview', 'end_preview'].includes(state.gameState)) return;
@@ -3100,11 +3128,13 @@
             }
             zone.addEventListener('mousedown', onPointerDown); zone.addEventListener('mouseup', onPointerUp); zone.addEventListener('touchstart', onPointerDown, { passive: false }); zone.addEventListener('touchend', onPointerUp);
             function onPadPointerDown(e, pad) {
+                if (window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
                 e.preventDefault(); e.stopPropagation();
                 if (player.status !== 'inspecting') return;
                 if (e.type === 'mousedown') {
                     // Single-mouse friendly: clicking one pad with mouse engages both pads
                     engagePadsForReady();
+                    if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'inspecting-ready' });
                     return;
                 }
                 if (pad === 'top') player.touchPads.topHeld = true;
@@ -3114,13 +3144,16 @@
                     player.status = 'inspecting-ready';
                     player.touchPads.top.classList.add('set');
                     player.touchPads.bottom.classList.add('set');
+                    if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'inspecting-ready' });
                 }
             }
             function onPadPointerUp(e, pad) {
+                if (window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
                 e.preventDefault(); e.stopPropagation();
                 if (player.status === 'inspecting-ready') {
                     releasePadsAndReset();
                     startSolve(player);
+                    if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'solving' });
                     return;
                 }
                 if (pad === 'top') player.touchPads.topHeld = false;
@@ -3256,7 +3289,124 @@
             const p1Final = getFinalTime(players[0].solves[players[0].solves.length - 1]); const p2Final = getFinalTime(players[1].solves[players[1].solves.length - 1]);
             let winner = null; if (p1Final < p2Final) { players[0].zone.classList.add('timer-winner-active'); winner = players[0]; } else if (p2Final < p1Final) { players[1].zone.classList.add('timer-winner-active'); winner = players[1]; } return winner;
         }
-        function checkRoundOver() { if (players.every(p => p.status === 'finished')) { dom.nextScrambleBtn.classList.remove('hidden'); document.body.classList.remove('bg-solving'); const winner = highlightRoundWinner(); if(winner) createWinnerRipple(winner, 2); } else { dom.nextScrambleBtn.classList.add('hidden'); } }
+        const onlineSyncState = {
+            nextRound: [false, false],
+            nextRoundPending: false,
+            winnerNewMatch: [false, false],
+            winnerPending: false,
+            previewTrigger: null
+        };
+
+        function resetNextRoundBtnUI() {
+            onlineSyncState.nextRound = [false, false];
+            onlineSyncState.nextRoundPending = false;
+            const btn = document.getElementById('next-scramble-btn');
+            const span = btn ? btn.querySelector('span') : null;
+            const prog = document.getElementById('next-round-progress');
+            if (prog) { prog.style.transition = 'none'; prog.style.width = '0%'; }
+            if (btn) {
+                btn.classList.remove('btn-glow-holding', 'btn-glow-ready');
+                btn.classList.add('btn-glow-idle');
+            }
+            if (span) {
+                span.textContent = (window.DCT_P2P && DCT_P2P.enabled)
+                    ? 'READY FOR NEXT ROUND (0/2)'
+                    : 'NEXT ROUND (Hold Space + Enter or Click)';
+            }
+        }
+
+        function setOnlineNextRoundReady(playerIdx, isReady) {
+            if (onlineSyncState.nextRoundPending) return;
+            onlineSyncState.nextRound[playerIdx] = isReady;
+            const myIdx = DCT_P2P.isHost ? 0 : 1;
+            const oppIdx = DCT_P2P.isHost ? 1 : 0;
+            const btn = document.getElementById('next-scramble-btn');
+            const span = btn ? btn.querySelector('span') : null;
+            const count = (onlineSyncState.nextRound[0] ? 1 : 0) + (onlineSyncState.nextRound[1] ? 1 : 0);
+
+            if (onlineSyncState.nextRound[0] && onlineSyncState.nextRound[1]) {
+                onlineSyncState.nextRoundPending = true;
+                if (span) span.textContent = 'STARTING NEXT ROUND...';
+                if (btn) { btn.classList.remove('btn-glow-holding', 'btn-glow-idle'); btn.classList.add('btn-glow-ready'); }
+                setTimeout(() => nextRound(), 250);
+                return;
+            }
+            if (btn) {
+                btn.classList.toggle('btn-glow-holding', onlineSyncState.nextRound[myIdx]);
+                btn.classList.toggle('btn-glow-idle', !onlineSyncState.nextRound[myIdx]);
+            }
+            if (span) {
+                if (onlineSyncState.nextRound[myIdx]) {
+                    span.textContent = `WAITING FOR OPPONENT... (${count}/2)`;
+                } else if (onlineSyncState.nextRound[oppIdx]) {
+                    span.textContent = `OPPONENT READY! CLICK OR PRESS SPACE (${count}/2)`;
+                } else {
+                    span.textContent = `READY FOR NEXT ROUND (0/2)`;
+                }
+            }
+        }
+
+        function setOnlineWinnerReady(playerIdx, isReady) {
+            if (onlineSyncState.winnerPending) return;
+            onlineSyncState.winnerNewMatch[playerIdx] = isReady;
+            const myIdx = DCT_P2P.isHost ? 0 : 1;
+            const oppIdx = DCT_P2P.isHost ? 1 : 0;
+            const btn = document.getElementById('winner-new-match-btn');
+            const span = btn ? btn.querySelector('span') : null;
+            const count = (onlineSyncState.winnerNewMatch[0] ? 1 : 0) + (onlineSyncState.winnerNewMatch[1] ? 1 : 0);
+
+            if (onlineSyncState.winnerNewMatch[0] && onlineSyncState.winnerNewMatch[1]) {
+                onlineSyncState.winnerPending = true;
+                if (span) span.textContent = 'LAUNCHING NEW MATCH...';
+                setTimeout(() => newMatch(), 250);
+                return;
+            }
+            if (span) {
+                if (onlineSyncState.winnerNewMatch[myIdx]) {
+                    span.textContent = `WAITING FOR OPPONENT... (${count}/2)`;
+                } else if (onlineSyncState.winnerNewMatch[oppIdx]) {
+                    span.textContent = `OPPONENT READY! CLICK FOR NEW MATCH (${count}/2)`;
+                } else {
+                    span.textContent = `READY FOR NEW MATCH (0/2)`;
+                }
+            }
+        }
+
+        function handleNextRoundAction() {
+            if (window.DCT_P2P && DCT_P2P.enabled) {
+                if (onlineSyncState.nextRoundPending) return;
+                const myIdx = DCT_P2P.isHost ? 0 : 1;
+                const nextVal = !onlineSyncState.nextRound[myIdx];
+                setOnlineNextRoundReady(myIdx, nextVal);
+                DCT_P2P.send({ type: 'NEXT_ROUND_READY', ready: nextVal });
+            } else {
+                nextRound();
+            }
+        }
+
+        function handleWinnerNewMatchAction() {
+            if (window.DCT_P2P && DCT_P2P.enabled) {
+                if (onlineSyncState.winnerPending) return;
+                const myIdx = DCT_P2P.isHost ? 0 : 1;
+                const nextVal = !onlineSyncState.winnerNewMatch[myIdx];
+                setOnlineWinnerReady(myIdx, nextVal);
+                DCT_P2P.send({ type: 'NEW_MATCH_READY', ready: nextVal });
+            } else {
+                window.newMatch();
+            }
+        }
+
+        function checkRoundOver() {
+            if (players.every(p => p.status === 'finished')) {
+                resetNextRoundBtnUI();
+                dom.nextScrambleBtn.classList.remove('hidden');
+                document.body.classList.remove('bg-solving');
+                const winner = highlightRoundWinner();
+                if (winner) createWinnerRipple(winner, 2);
+            } else {
+                dom.nextScrambleBtn.classList.add('hidden');
+            }
+        }
         function getFinalTime(solve) { if (!solve) return Infinity; if (solve.penalty === 'DNF' || solve.originalTime === Infinity) return Infinity; if (solve.penalty === '+2') return solve.originalTime + 2000; return solve.originalTime; };
         function generateSolveHTML(solve, isWinner) { if (!solve) return `<div>--</div>`; let displayTime = formatTime(solve.originalTime); let penaltyBadge = ''; if (solve.penalty === '+2') { displayTime = formatTime(solve.originalTime + 2000); penaltyBadge = `<span class="penalty-badge penalty-badge-plus2">+2</span>`; } else if (solve.penalty === 'DNF' || solve.originalTime === Infinity) { displayTime = 'DNF'; penaltyBadge = `<span class="penalty-badge penalty-badge-dnf">DNF</span>`; } const winnerClass = isWinner ? 'round-winner' : ''; return `<div class="solve-display ${winnerClass}"><span class="font-bold">${displayTime}</span>${penaltyBadge}</div>`; };
 
@@ -3312,8 +3462,9 @@
         }
         function updateFinishedDisplay(player) { if (!player.solves.length) return; const lastSolve = player.solves[player.solves.length - 1]; player.zone.classList.remove("penalty-plus2", "penalty-dnf"); if (lastSolve.penalty === '+2') { player.timerEl.innerHTML = `${formatTime(lastSolve.originalTime + 2000)}<span class="text-4xl sm:text-5xl align-top ml-2 text-yellow-200">+2</span>`; player.zone.classList.add("penalty-plus2"); } else if (lastSolve.penalty === 'DNF' || lastSolve.originalTime === Infinity) { player.timerEl.textContent = "DNF"; player.zone.classList.add("penalty-dnf"); } else { player.timerEl.textContent = formatTime(lastSolve.originalTime); } }
         function calculateAverage(solves) { const finalTimes = solves.map(s => getFinalTime(s)); if (finalTimes.length < 5) { const validTimes = finalTimes.filter(t => t !== Infinity); if (validTimes.length === 0 && finalTimes.length > 0) return Infinity; if (validTimes.length === 0) return 0; const sum = validTimes.reduce((acc, val) => acc + val, 0); return sum / validTimes.length; } else { const sorted = [...finalTimes].sort((a, b) => a - b); const dnfCount = sorted.filter(t => t === Infinity).length; if (dnfCount >= 2) return Infinity; const timesToAverage = sorted.slice(1, -1); if (timesToAverage.some(t => t === Infinity)) return Infinity; const sum = timesToAverage.reduce((acc, val) => acc + val, 0); return sum / timesToAverage.length; } }
-        function startFinalRound() { state.gameState = 'playing'; players.forEach(p => { document.getElementById(`player${p.id}-ao5-preview`).classList.add('hidden'); document.getElementById(`player${p.id}-ao5-preview`).classList.remove('flex'); const continueBtn = document.getElementById(`p${p.id}-continue-btn`); continueBtn.textContent = 'CONTINUE'; continueBtn.classList.remove('bg-green-600', 'bg-red-600', 'hover:bg-red-700'); continueBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700'); document.getElementById(`p${p.id}-continue-progress`).style.width = '0%'; }); state.currentRound++; dom.matchStatus.textContent = `Round ${state.currentRound} / ${state.maxRounds}`; dom.nextScrambleBtn.classList.add("hidden"); players.forEach(p => { p.status = "idle"; p.solveTime = 0; p.inspectionPenalty = 'none'; p.timerEl.textContent = "0.00"; updateVisuals(p, 'state-idle'); p.timerEl.style.color = ''; p.isReadyForNextRound = false; p.timerEl.classList.remove('hidden'); }); newScramble(); }
+        function startFinalRound() { resetNextRoundBtnUI(); state.gameState = 'playing'; players.forEach(p => { document.getElementById(`player${p.id}-ao5-preview`).classList.add('hidden'); document.getElementById(`player${p.id}-ao5-preview`).classList.remove('flex'); const continueBtn = document.getElementById(`p${p.id}-continue-btn`); continueBtn.textContent = 'CONTINUE'; continueBtn.classList.remove('bg-green-600', 'bg-red-600', 'hover:bg-red-700'); continueBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700'); document.getElementById(`p${p.id}-continue-progress`).style.width = '0%'; }); state.currentRound++; dom.matchStatus.textContent = `Round ${state.currentRound} / ${state.maxRounds}`; dom.nextScrambleBtn.classList.add("hidden"); players.forEach(p => { p.status = "idle"; p.solveTime = 0; p.inspectionPenalty = 'none'; p.timerEl.textContent = "0.00"; updateVisuals(p, 'state-idle'); p.timerEl.style.color = ''; p.isReadyForNextRound = false; p.timerEl.classList.remove('hidden'); }); newScramble(); }
         function nextRound() {
+            resetNextRoundBtnUI();
             if (state.currentRound > 0 && state.currentRound <= state.maxRounds) {
                 state.currentMatchData.rounds.push({
                     scramble: state.scramble,
@@ -3692,7 +3843,18 @@
                     
                     controls.classList.remove('opacity-0'); 
                     controls.classList.add('opacity-100');
-                    document.getElementById('winner-new-match-btn').onclick = window.newMatch;
+                    onlineSyncState.winnerNewMatch = [false, false];
+                    onlineSyncState.winnerPending = false;
+                    const winnerBtn = document.getElementById('winner-new-match-btn');
+                    if (winnerBtn) {
+                        const span = winnerBtn.querySelector('span');
+                        if (span) {
+                            span.textContent = (window.DCT_P2P && DCT_P2P.enabled)
+                                ? 'READY FOR NEW MATCH (0/2)'
+                                : 'PLAY NEW MATCH';
+                        }
+                        winnerBtn.onclick = handleWinnerNewMatchAction;
+                    }
                 };
 
                 // --- LOGIC FLOW ---
@@ -3738,6 +3900,15 @@
 
         // Global New Match Function (Warp Speed Edition)
         window.newMatch = function() {
+            resetNextRoundBtnUI();
+            onlineSyncState.winnerNewMatch = [false, false];
+            onlineSyncState.winnerPending = false;
+            const winnerBtnSpan = document.querySelector('#winner-new-match-btn span');
+            if (winnerBtnSpan) {
+                winnerBtnSpan.textContent = (window.DCT_P2P && DCT_P2P.enabled)
+                    ? 'READY FOR NEW MATCH (0/2)'
+                    : 'PLAY NEW MATCH';
+            }
             // 1. Hide Winner Modal Immediately
             const modal = document.getElementById('winner-modal');
             const card = document.getElementById('winner-card');
@@ -4485,12 +4656,16 @@
         function setupHoldToProceedButton(player, type, nextGameState, onBothReadyCallback) {
             const button = document.getElementById(`p${player.id}-${type}-btn`);
             const otherPlayer = players.find(p => p.id !== player.id);
+            const isOnline = window.DCT_P2P && DCT_P2P.enabled;
+            const myId = isOnline ? (DCT_P2P.isHost ? 1 : 2) : null;
+            const isRemoteButton = isOnline && player.id !== myId;
             
             const idleGlowClass = type === 'bonus-continue' ? 'btn-glow-bonus' : 'btn-glow-idle';
             button.className = `w-full py-3 px-6 rounded-lg font-bold text-white btn-dynamic ${idleGlowClass}`;
+            if (isRemoteButton) button.classList.add('pointer-events-none', 'opacity-80');
             
-            let labelText = 'CONTINUE';
-            if (type === 'end') labelText = 'SHOW RESULTS';
+            let labelText = isRemoteButton ? `WAITING FOR ${player.name.toUpperCase()}...` : 'CONTINUE';
+            if (type === 'end') labelText = isRemoteButton ? `WAITING FOR ${player.name.toUpperCase()}...` : 'SHOW RESULTS';
             button.innerHTML = labelText;
 
             const triggerSharedProgress = () => {
@@ -4523,9 +4698,12 @@
                 }, 800);
             };
 
+            onlineSyncState.previewTrigger = triggerSharedProgress;
+
             const startHold = (e) => {
                 if (e && e.preventDefault) e.preventDefault();
                 if (e && e.stopPropagation) e.stopPropagation();
+                if (isRemoteButton) return;
                 if (state.gameState !== nextGameState || player.isReadyForNextRound) return;
                 
                 player.isReadyForNextRound = true;
@@ -4535,47 +4713,53 @@
                     activeBtn.classList.add('btn-glow-holding');
                     activeBtn.textContent = 'READY ✓';
                 }
+                if (isOnline) DCT_P2P.send({ type: 'PREVIEW_READY', previewType: type, ready: true });
                 triggerSharedProgress();
             };
 
             const cancelHold = (e) => {
                 if (e && e.preventDefault) e.preventDefault();
                 if (e && e.stopPropagation) e.stopPropagation();
+                if (isRemoteButton) return;
                 if (state.gameState !== nextGameState) return;
                 
                 clearTimeout(sharedContinueTimeout);
                 clearInterval(sharedProgressInterval);
                 
-                players.forEach(p => {
-                    p.isReadyForNextRound = false;
-                    const btn = document.getElementById(`p${p.id}-${type}-btn`);
+                if (isOnline) {
+                    player.isReadyForNextRound = false;
+                    const btn = document.getElementById(`p${player.id}-${type}-btn`);
                     if (btn) {
                         btn.textContent = labelText;
                         btn.classList.remove('btn-glow-holding', 'btn-glow-ready');
                         btn.classList.add(idleGlowClass);
                     }
-                    const bar = document.getElementById(`p${p.id}-${type}-progress`);
-                    if (bar) bar.style.width = '0%';
-                });
-            };
-
-            const toggleMouseClick = (e) => {
-                e.preventDefault(); e.stopPropagation();
-                if (state.gameState !== nextGameState) return;
-                if (player.isReadyForNextRound) {
-                    clearTimeout(sharedContinueTimeout);
-                    clearInterval(sharedProgressInterval);
-                    player.isReadyForNextRound = false;
-                    const activeBtn = document.getElementById(`p${player.id}-${type}-btn`);
-                    if (activeBtn) {
-                        activeBtn.textContent = labelText;
-                        activeBtn.classList.remove('btn-glow-holding', 'btn-glow-ready');
-                        activeBtn.classList.add(idleGlowClass);
-                    }
                     players.forEach(p_inner => {
                         const bar = document.getElementById(`p${p_inner.id}-${type}-progress`);
                         if (bar) bar.style.width = '0%';
                     });
+                    DCT_P2P.send({ type: 'PREVIEW_READY', previewType: type, ready: false });
+                } else {
+                    players.forEach(p => {
+                        p.isReadyForNextRound = false;
+                        const btn = document.getElementById(`p${p.id}-${type}-btn`);
+                        if (btn) {
+                            btn.textContent = labelText;
+                            btn.classList.remove('btn-glow-holding', 'btn-glow-ready');
+                            btn.classList.add(idleGlowClass);
+                        }
+                        const bar = document.getElementById(`p${p.id}-${type}-progress`);
+                        if (bar) bar.style.width = '0%';
+                    });
+                }
+            };
+
+            const toggleMouseClick = (e) => {
+                if (isRemoteButton) return;
+                e.preventDefault(); e.stopPropagation();
+                if (state.gameState !== nextGameState) return;
+                if (player.isReadyForNextRound) {
+                    cancelHold(e);
                 } else {
                     startHold(e);
                 }
@@ -4584,13 +4768,13 @@
             const newButton = button.cloneNode(true);
             button.parentNode.replaceChild(newButton, button);
             
-            // Keyboard & Touch simultaneous hold events
-            newButton.addEventListener('kb-hold-start', startHold);
-            newButton.addEventListener('kb-hold-end', cancelHold);
-            newButton.addEventListener('touchstart', startHold, { passive: false });
-            newButton.addEventListener('touchend', cancelHold);
-            // Single-mouse click toggle for desktop / non-touchscreen users
-            newButton.addEventListener('click', toggleMouseClick);
+            if (!isRemoteButton) {
+                newButton.addEventListener('kb-hold-start', startHold);
+                newButton.addEventListener('kb-hold-end', cancelHold);
+                newButton.addEventListener('touchstart', startHold, { passive: false });
+                newButton.addEventListener('touchend', cancelHold);
+                newButton.addEventListener('click', toggleMouseClick);
+            }
         }
         function displayAo5Preview() { state.gameState = 'ao5_preview'; let p1Wins = 0, p2Wins = 0; for(let i=0; i<4; i++) { const t1 = getFinalTime(players[0].solves[i]); const t2 = getFinalTime(players[1].solves[i]); if(t1 < t2) p1Wins++; if(t2 < t1) p2Wins++; } const p1Potential = document.getElementById('p1-potential-ace'); const p2Potential = document.getElementById('p2-potential-ace'); p1Potential.classList.add('hidden'); p2Potential.classList.add('hidden'); if (p1Wins === 4) p1Potential.classList.remove('hidden'); if (p2Wins === 4) p2Potential.classList.remove('hidden'); players.forEach(player => { const solves = player.solves; if (solves.length !== 4) return; const solvesForBest = [...solves, { originalTime: 0, penalty: 'none' }]; const solvesForWorst = [...solves, { originalTime: Infinity, penalty: 'DNF' }]; document.getElementById(`p${player.id}-best-ao5`).textContent = formatTime(calculateAverage(solvesForBest)); document.getElementById(`p${player.id}-worst-ao5`).textContent = formatTime(calculateAverage(solvesForWorst)); player.timerEl.classList.add('hidden'); document.getElementById(`player${player.id}-ao5-preview`).classList.remove('hidden'); document.getElementById(`player${player.id}-ao5-preview`).classList.add('flex'); setupHoldToProceedButton(player, 'continue', 'ao5_preview', startFinalRound); }); }
         function displayFinalResults() {
@@ -4845,6 +5029,9 @@
             // Single-key timer control: Space (Left P1) and Enter (Right P2)
             function handleTimerKey(player, isKeyDown) {
                 if (isAnyModalBlockingInput() || state.gameState !== 'playing') return;
+                const isOnline = window.DCT_P2P && DCT_P2P.enabled;
+                if (isOnline && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
+                const emitState = (status) => { if (isOnline) DCT_P2P.send({ type: 'STATE', status }); };
                 const zone = player.zone;
                 const pads = player.touchPads;
                 const otherPlayer = players.find(p => p.id !== player.id);
@@ -4858,12 +5045,14 @@
                 if (isKeyDown && player.status === 'idle') {
                     player.status = 'readying';
                     updateVisuals(player, 'state-ready');
-                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                    if (isOnline) {
+                        emitState('readying');
                         clearTimeout(player.readyTimeout);
                         player.readyTimeout = setTimeout(() => {
                             if (player.status === 'readying') {
-                                player.status = 'set'; updateVisuals(player, 'state-set');
-                                DCT_P2P.send({ type: 'STATE', status: 'set' });
+                                player.status = 'set';
+                                updateVisuals(player, 'state-set');
+                                emitState('set');
                             }
                         }, 300);
                     } else if (otherPlayer.status === 'readying') {
@@ -4880,14 +5069,20 @@
                 if (!isKeyDown && player.status === 'readying') {
                     player.status = 'idle';
                     updateVisuals(player, 'state-idle');
-                    if (window.DCT_P2P && DCT_P2P.enabled) clearTimeout(player.readyTimeout);
-                    else clearTimeout(sharedReadyTimeout);
+                    if (isOnline) {
+                        clearTimeout(player.readyTimeout);
+                        emitState('idle');
+                    } else {
+                        clearTimeout(sharedReadyTimeout);
+                    }
                     return;
                 }
 
                 if (!isKeyDown && player.status === 'set') {
-                    if (window.DCT_P2P && DCT_P2P.enabled) {
-                        updateVisuals(player, 'state-inspecting'); startInspection(player);
+                    if (isOnline) {
+                        updateVisuals(player, 'state-inspecting');
+                        startInspection(player);
+                        emitState('inspecting');
                     } else if (players.every(p => p.status === 'set')) {
                         players.forEach(p => { updateVisuals(p, 'state-inspecting'); startInspection(p); });
                     }
@@ -4899,9 +5094,13 @@
                         pads.topHeld = true; pads.bottomHeld = true;
                         pads.top.classList.add('touched', 'set');
                         pads.bottom.classList.add('touched', 'set');
-                        player.status = 'inspecting-ready';
+                        if (player.status !== 'inspecting-ready') {
+                            player.status = 'inspecting-ready';
+                            emitState('inspecting-ready');
+                        }
                     } else if (player.status === 'inspecting-ready') {
                         startSolve(player);
+                        emitState('solving');
                     }
                 }
             }
@@ -4994,8 +5193,18 @@
                     }
                 }
 
-                // 1. Winner Screen Logic (Space + Enter hold)
+                // 1. Winner Screen Logic (Online single click/key sync, Local Space + Enter hold)
                 if (state.gameState === 'winner_screen') {
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        if (isLeftTimerKey(e) || isRightTimerKey(e)) {
+                            const myIdx = DCT_P2P.isHost ? 0 : 1;
+                            if (!onlineSyncState.winnerPending && !onlineSyncState.winnerNewMatch[myIdx]) {
+                                setOnlineWinnerReady(myIdx, true);
+                                DCT_P2P.send({ type: 'NEW_MATCH_READY', ready: true });
+                            }
+                        }
+                        return;
+                    }
                     if (isLeftTimerKey(e)) nextRoundState.p1Held = true;
                     if (isRightTimerKey(e)) nextRoundState.p2Held = true;
 
@@ -5018,51 +5227,66 @@
                     return;
                 }
 
-                // 2. Penalties & DNF Reset (A on Left, J on Right; in Online mode A controls your own half)
+                // 2. Penalties & DNF Reset (A on Left, J on Right; in Online mode A or J controls your own half)
                 if (window.DCT_P2P && DCT_P2P.enabled) {
                     const myPlayer = players[DCT_P2P.isHost ? 0 : 1];
-                    if (isLeftPenaltyKey(e)) { handlePenaltyKey(myPlayer, true); return; }
+                    if (isLeftPenaltyKey(e) || isRightPenaltyKey(e)) { handlePenaltyKey(myPlayer, true); return; }
                 } else {
                     if (isLeftPenaltyKey(e)) { handlePenaltyKey(players[0], true); return; }
                     if (isRightPenaltyKey(e)) { handlePenaltyKey(players[1], true); return; }
                 }
 
-                // 3. Preview Screens Continue Hold (Space for P1, Enter for P2)
+                // 3. Preview Screens Continue Hold (Space for P1, Enter for P2; Online uses click toggle)
                 if (['ao5_preview', 'bonus_preview', 'end_preview'].includes(state.gameState)) {
-                    if (isLeftTimerKey(e)) triggerPreviewButton(1, 'kb-hold-start');
-                    if (isRightTimerKey(e)) triggerPreviewButton(2, 'kb-hold-start');
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        const myId = DCT_P2P.isHost ? 1 : 2;
+                        if (isLeftTimerKey(e) || isRightTimerKey(e)) triggerPreviewButton(myId, 'click');
+                    } else {
+                        if (isLeftTimerKey(e)) triggerPreviewButton(1, 'kb-hold-start');
+                        if (isRightTimerKey(e)) triggerPreviewButton(2, 'kb-hold-start');
+                    }
                     return;
                 }
 
-                // 4. Next Round Center Button (Hold Space + Enter when round finished)
+                // 4. Next Round Center Button (Online single press/click sync, Local Space + Enter hold)
                 const nextBtn = document.getElementById('next-scramble-btn');
                 const nextProgress = document.getElementById('next-round-progress');
                 if (nextBtn && !nextBtn.classList.contains('hidden') && state.gameState === 'playing') {
-                    if (isLeftTimerKey(e)) nextRoundState.p1Held = true;
-                    if (isRightTimerKey(e)) nextRoundState.p2Held = true;
-                    if (nextRoundState.p1Held || nextRoundState.p2Held) {
-                        nextBtn.classList.remove('btn-glow-idle');
-                        nextBtn.classList.add('btn-glow-holding');
-                    }
-                    if (nextRoundState.p1Held && nextRoundState.p2Held && !nextRoundState.timer) {
-                        nextProgress.style.transition = 'width 0.5s linear';
-                        nextProgress.style.width = '100%';
-                        nextRoundState.timer = setTimeout(() => {
-                            nextRound();
-                            nextRoundState.timer = null;
-                            nextRoundState.p1Held = false; nextRoundState.p2Held = false;
-                            nextProgress.style.transition = 'none'; nextProgress.style.width = '0%';
-                            nextBtn.classList.remove('btn-glow-holding'); nextBtn.classList.add('btn-glow-idle');
-                        }, 500);
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        if (isLeftTimerKey(e) || isRightTimerKey(e)) {
+                            const myIdx = DCT_P2P.isHost ? 0 : 1;
+                            if (!onlineSyncState.nextRoundPending && !onlineSyncState.nextRound[myIdx]) {
+                                setOnlineNextRoundReady(myIdx, true);
+                                DCT_P2P.send({ type: 'NEXT_ROUND_READY', ready: true });
+                            }
+                            return;
+                        }
+                    } else {
+                        if (isLeftTimerKey(e)) nextRoundState.p1Held = true;
+                        if (isRightTimerKey(e)) nextRoundState.p2Held = true;
+                        if (nextRoundState.p1Held || nextRoundState.p2Held) {
+                            nextBtn.classList.remove('btn-glow-idle');
+                            nextBtn.classList.add('btn-glow-holding');
+                        }
+                        if (nextRoundState.p1Held && nextRoundState.p2Held && !nextRoundState.timer) {
+                            nextProgress.style.transition = 'width 0.5s linear';
+                            nextProgress.style.width = '100%';
+                            nextRoundState.timer = setTimeout(() => {
+                                nextRound();
+                                nextRoundState.timer = null;
+                                nextRoundState.p1Held = false; nextRoundState.p2Held = false;
+                                nextProgress.style.transition = 'none'; nextProgress.style.width = '0%';
+                                nextBtn.classList.remove('btn-glow-holding'); nextBtn.classList.add('btn-glow-idle');
+                            }, 500);
+                        }
                     }
                 }
 
-                // 5. Timer Keys (Space = Left P1, Enter = Right P2; in Online mode Space controls your own half)
+                // 5. Timer Keys (Space = Left P1, Enter = Right P2; in Online mode Space or Enter controls your own half)
                 if (window.DCT_P2P && DCT_P2P.enabled) {
                     const myPlayer = players[DCT_P2P.isHost ? 0 : 1];
-                    if (isLeftTimerKey(e)) {
+                    if (isLeftTimerKey(e) || isRightTimerKey(e)) {
                         handleTimerKey(myPlayer, true);
-                        DCT_P2P.send({ type: 'STATE', status: myPlayer.status });
                     }
                 } else {
                     if (isLeftTimerKey(e)) handleTimerKey(players[0], true);
@@ -5072,6 +5296,7 @@
 
             document.addEventListener('keyup', (e) => {
                 if (state.gameState === 'winner_screen') {
+                    if (window.DCT_P2P && DCT_P2P.enabled) return;
                     if (isLeftTimerKey(e)) nextRoundState.p1Held = false;
                     if (isRightTimerKey(e)) nextRoundState.p2Held = false;
 
@@ -5086,27 +5311,28 @@
                     return;
                 }
 
-                if (isLeftTimerKey(e)) nextRoundState.p1Held = false;
-                if (isRightTimerKey(e)) nextRoundState.p2Held = false;
+                if (!(window.DCT_P2P && DCT_P2P.enabled)) {
+                    if (isLeftTimerKey(e)) nextRoundState.p1Held = false;
+                    if (isRightTimerKey(e)) nextRoundState.p2Held = false;
 
-                if (nextRoundState.timer && (!nextRoundState.p1Held || !nextRoundState.p2Held)) {
-                    clearTimeout(nextRoundState.timer);
-                    nextRoundState.timer = null;
-                    const nextBtn = document.getElementById('next-scramble-btn');
-                    const nextProgress = document.getElementById('next-round-progress');
-                    if (nextProgress) { nextProgress.style.transition = 'none'; nextProgress.style.width = '0%'; }
-                    if (nextBtn) { nextBtn.classList.remove('btn-glow-holding'); nextBtn.classList.add('btn-glow-idle'); }
+                    if (nextRoundState.timer && (!nextRoundState.p1Held || !nextRoundState.p2Held)) {
+                        clearTimeout(nextRoundState.timer);
+                        nextRoundState.timer = null;
+                        const nextBtn = document.getElementById('next-scramble-btn');
+                        const nextProgress = document.getElementById('next-round-progress');
+                        if (nextProgress) { nextProgress.style.transition = 'none'; nextProgress.style.width = '0%'; }
+                        if (nextBtn) { nextBtn.classList.remove('btn-glow-holding'); nextBtn.classList.add('btn-glow-idle'); }
+                    }
                 }
 
                 if (window.DCT_P2P && DCT_P2P.enabled) {
                     const myPlayer = players[DCT_P2P.isHost ? 0 : 1];
-                    if (isLeftPenaltyKey(e)) { handlePenaltyKey(myPlayer, false); return; }
-                    if (['ao5_preview', 'bonus_preview', 'end_preview'].includes(state.gameState) && isLeftTimerKey(e)) {
-                        triggerPreviewButton(myPlayer.id, 'kb-hold-end');
+                    if (isLeftPenaltyKey(e) || isRightPenaltyKey(e)) { handlePenaltyKey(myPlayer, false); return; }
+                    if (['ao5_preview', 'bonus_preview', 'end_preview'].includes(state.gameState) && (isLeftTimerKey(e) || isRightTimerKey(e))) {
+                        return;
                     }
-                    if (isLeftTimerKey(e)) {
+                    if (isLeftTimerKey(e) || isRightTimerKey(e)) {
                         handleTimerKey(myPlayer, false);
-                        DCT_P2P.send({ type: 'STATE', status: myPlayer.status });
                     }
                 } else {
                     if (isLeftPenaltyKey(e)) { handlePenaltyKey(players[0], false); return; }
@@ -5234,8 +5460,8 @@
             createCubePreview(); loadHistory(); handleTimerInteraction(players[0]); handleTimerInteraction(players[1]);
             
             // Core Listeners
-            if(dom.nextScrambleBtn) dom.nextScrambleBtn.addEventListener('click', nextRound); 
-            if(dom.winnerNewMatchBtn) dom.winnerNewMatchBtn.addEventListener('click', newMatch); 
+            if(dom.nextScrambleBtn) dom.nextScrambleBtn.addEventListener('click', handleNextRoundAction); 
+            if(dom.winnerNewMatchBtn) dom.winnerNewMatchBtn.onclick = handleWinnerNewMatchAction; 
             // FIX: Ensure 'Manage' button is visible when reopening dashboard
             if(dom.historyBtn) { 
                 dom.historyBtn.addEventListener('click', () => { 
@@ -5543,10 +5769,15 @@
             });
 
             const launchOnlineMatch = (p1Name, p2Name) => {
+                if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                    document.activeElement.blur();
+                }
                 players[0].name = p1Name;
                 players[1].name = p2Name;
-                const oppPlayer = players[DCT_P2P.isHost ? 1 : 0];
-                if (oppPlayer && oppPlayer.zone) oppPlayer.zone.classList.add('online-locked-zone');
+                const myIdx = DCT_P2P.isHost ? 0 : 1;
+                const oppIdx = DCT_P2P.isHost ? 1 : 0;
+                if (players[myIdx] && players[myIdx].zone) players[myIdx].zone.classList.remove('online-locked-zone');
+                if (players[oppIdx] && players[oppIdx].zone) players[oppIdx].zone.classList.add('online-locked-zone');
 
                 setupStage.classList.add('hidden');
                 waitingStage.classList.add('hidden');
@@ -5561,7 +5792,8 @@
             };
 
             DCT_P2P.on('message', (msg) => {
-                const oppPlayer = players[DCT_P2P.isHost ? 1 : 0];
+                const oppIdx = DCT_P2P.isHost ? 1 : 0;
+                const oppPlayer = players[oppIdx];
                 switch (msg.type) {
                     case 'HELLO':
                         if (DCT_P2P.isHost) {
@@ -5579,8 +5811,14 @@
                         break;
                     case 'SCRAMBLE':
                         if (!DCT_P2P.isHost && msg.scramble) {
-                            if (msg.gameMode) setGameMode(msg.gameMode);
-                            applyScrambleString(msg.scramble);
+                            const waitingNow = document.getElementById('scramble-text')?.textContent === 'Waiting for host scramble...';
+                            if (waitingNow || (state.gameState === 'playing' && (!msg.round || msg.round === state.currentRound))) {
+                                state.pendingRemoteScramble = null;
+                                if (msg.gameMode) setGameMode(msg.gameMode);
+                                applyScrambleString(msg.scramble);
+                            } else {
+                                state.pendingRemoteScramble = msg;
+                            }
                         }
                         break;
                     case 'STATE':
@@ -5618,6 +5856,40 @@
                         renderSolves(); updateFinishedDisplay(oppPlayer);
                         if (players.every(p => p.status === 'finished')) highlightRoundWinner();
                         checkRoundOver();
+                        break;
+                    case 'NEXT_ROUND_READY':
+                        setOnlineNextRoundReady(oppIdx, !!msg.ready);
+                        break;
+                    case 'NEW_MATCH_READY':
+                        setOnlineWinnerReady(oppIdx, !!msg.ready);
+                        break;
+                    case 'PREVIEW_READY':
+                        if (!oppPlayer || !msg.previewType) break;
+                        oppPlayer.isReadyForNextRound = !!msg.ready;
+                        {
+                            const oppBtn = document.getElementById(`p${oppPlayer.id}-${msg.previewType}-btn`);
+                            const idleGlow = msg.previewType === 'bonus-continue' ? 'btn-glow-bonus' : 'btn-glow-idle';
+                            if (oppBtn) {
+                                if (msg.ready) {
+                                    oppBtn.classList.remove('btn-glow-idle', 'btn-glow-bonus');
+                                    oppBtn.classList.add('btn-glow-holding');
+                                    oppBtn.textContent = 'READY ✓';
+                                } else {
+                                    oppBtn.classList.remove('btn-glow-holding', 'btn-glow-ready');
+                                    oppBtn.classList.add(idleGlow);
+                                    oppBtn.textContent = `WAITING FOR ${oppPlayer.name.toUpperCase()}...`;
+                                }
+                            }
+                            if (!msg.ready) {
+                                clearTimeout(sharedContinueTimeout);
+                                clearInterval(sharedProgressInterval);
+                                players.forEach(p_inner => {
+                                    const bar = document.getElementById(`p${p_inner.id}-${msg.previewType}-progress`);
+                                    if (bar) bar.style.width = '0%';
+                                });
+                            }
+                            if (onlineSyncState.previewTrigger) onlineSyncState.previewTrigger();
+                        }
                         break;
                 }
             });
