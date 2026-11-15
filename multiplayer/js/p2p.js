@@ -98,6 +98,12 @@
                 this.bindConnectionEvents();
             });
 
+            this.peer.on('disconnected', () => {
+                if (this.peer && !this.peer.destroyed) {
+                    this.peer.reconnect();
+                }
+            });
+
             this.peer.on('error', (err) => {
                 this.emit('error', err.message || 'Connection error');
             });
@@ -116,15 +122,27 @@
             }
 
             this.peer = new Peer(undefined, { debug: 0, config: ICE_CONFIG });
+            const maxRetries = 3;
+            let retryCount = 0;
 
-            this.peer.on('open', () => {
+            const attemptConnect = () => {
+                if (!this.peer || this.peer.destroyed || this.connected) return;
                 this.conn = this.peer.connect(PEER_PREFIX + this.roomCode, { reliable: true });
                 this.bindConnectionEvents();
+            };
+
+            this.peer.on('open', () => {
+                attemptConnect();
             });
 
             this.peer.on('error', (err) => {
                 if (err.type === 'peer-unavailable') {
-                    this.emit('error', 'Room not found or host is offline. Make sure the host tab is still open!');
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        setTimeout(attemptConnect, 2000);
+                    } else {
+                        this.emit('error', 'Room not found or host is offline. Make sure the host tab is still open!');
+                    }
                 } else {
                     this.emit('error', err.message || 'Could not join room. Check the code or host status.');
                 }
