@@ -3040,7 +3040,16 @@
                 if (state.gameState !== 'playing' && player.status !== 'finished') return;
                 if (player.status === 'idle') {
                     player.status = 'readying'; updateVisuals(player, 'state-ready');
-                    if (otherPlayer.status === 'readying') {
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        DCT_P2P.send({ type: 'STATE', status: 'readying' });
+                        clearTimeout(player.readyTimeout);
+                        player.readyTimeout = setTimeout(() => {
+                            if (player.status === 'readying') {
+                                player.status = 'set'; updateVisuals(player, 'state-set');
+                                DCT_P2P.send({ type: 'STATE', status: 'set' });
+                            }
+                        }, 300);
+                    } else if (otherPlayer.status === 'readying') {
                         clearTimeout(sharedReadyTimeout);
                         sharedReadyTimeout = setTimeout(() => {
                             if (players[0].status === 'readying' && players[1].status === 'readying') {
@@ -3051,6 +3060,7 @@
                 } else if (e.type === 'mousedown' && player.status === 'inspecting') {
                     // Single-mouse friendly: holding anywhere on the zone engages both pads
                     engagePadsForReady();
+                    if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'inspecting-ready' });
                 } else if (player.status === 'solving') {
                     stopSolve(player, e);
                 } else if (player.status === 'finished') {
@@ -3063,11 +3073,27 @@
                 e.preventDefault();
                 if (!['playing', 'ao5_preview', 'bonus_preview', 'end_preview'].includes(state.gameState)) return;
                 if (state.gameState !== 'playing' && player.status !== 'finished') { if (player.status === 'readying') { clearTimeout(sharedReadyTimeout); players.forEach(p => { p.status = 'idle'; updateVisuals(p, 'state-idle'); }); } return; }
-                if (player.status === 'readying') { clearTimeout(sharedReadyTimeout); players.forEach(p => { p.status = 'idle'; updateVisuals(p, 'state-idle'); }); }
-                else if (player.status === 'set') { if (players.every(p => p.status === 'set')) { players.forEach(p => { updateVisuals(p, 'state-inspecting'); startInspection(p); }); } }
+                if (player.status === 'readying') {
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        clearTimeout(player.readyTimeout);
+                        player.status = 'idle'; updateVisuals(player, 'state-idle');
+                        DCT_P2P.send({ type: 'STATE', status: 'idle' });
+                    } else {
+                        clearTimeout(sharedReadyTimeout); players.forEach(p => { p.status = 'idle'; updateVisuals(p, 'state-idle'); });
+                    }
+                }
+                else if (player.status === 'set') {
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        updateVisuals(player, 'state-inspecting'); startInspection(player);
+                        DCT_P2P.send({ type: 'STATE', status: 'inspecting' });
+                    } else if (players.every(p => p.status === 'set')) {
+                        players.forEach(p => { updateVisuals(p, 'state-inspecting'); startInspection(p); });
+                    }
+                }
                 else if (e.type === 'mouseup' && player.status === 'inspecting-ready') {
                     releasePadsAndReset();
                     startSolve(player);
+                    if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'solving' });
                 }
                 else if (player.status === 'resetting-dnf') { clearTimeout(sharedDNFDualResetTimeout); players.forEach(p => { if (p.status === 'resetting-dnf') { p.status = 'finished'; updateVisuals(p, 'state-finished'); updateFinishedDisplay(p); } }); document.body.classList.remove('bg-resetting'); }
                 else if (player.status === 'cycling-penalty') { player.status = 'finished'; cyclePenalty(player); }
@@ -4832,7 +4858,15 @@
                 if (isKeyDown && player.status === 'idle') {
                     player.status = 'readying';
                     updateVisuals(player, 'state-ready');
-                    if (otherPlayer.status === 'readying') {
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        clearTimeout(player.readyTimeout);
+                        player.readyTimeout = setTimeout(() => {
+                            if (player.status === 'readying') {
+                                player.status = 'set'; updateVisuals(player, 'state-set');
+                                DCT_P2P.send({ type: 'STATE', status: 'set' });
+                            }
+                        }, 300);
+                    } else if (otherPlayer.status === 'readying') {
                         clearTimeout(sharedReadyTimeout);
                         sharedReadyTimeout = setTimeout(() => {
                             if (players[0].status === 'readying' && players[1].status === 'readying') {
@@ -4846,12 +4880,15 @@
                 if (!isKeyDown && player.status === 'readying') {
                     player.status = 'idle';
                     updateVisuals(player, 'state-idle');
-                    clearTimeout(sharedReadyTimeout);
+                    if (window.DCT_P2P && DCT_P2P.enabled) clearTimeout(player.readyTimeout);
+                    else clearTimeout(sharedReadyTimeout);
                     return;
                 }
 
                 if (!isKeyDown && player.status === 'set') {
-                    if (players.every(p => p.status === 'set')) {
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        updateVisuals(player, 'state-inspecting'); startInspection(player);
+                    } else if (players.every(p => p.status === 'set')) {
                         players.forEach(p => { updateVisuals(p, 'state-inspecting'); startInspection(p); });
                     }
                     return;
