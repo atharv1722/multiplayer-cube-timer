@@ -3044,6 +3044,19 @@
             }
         }
 
+        function checkOnlineSimultaneousReady() {
+            if (!window.DCT_P2P || !DCT_P2P.enabled || !DCT_P2P.isHost) return;
+            clearTimeout(sharedReadyTimeout);
+            if (players[0].status === 'readying' && players[1].status === 'readying') {
+                sharedReadyTimeout = setTimeout(() => {
+                    if (players[0].status === 'readying' && players[1].status === 'readying') {
+                        players.forEach(p => { p.status = 'set'; updateVisuals(p, 'state-set'); });
+                        DCT_P2P.send({ type: 'BOTH_SET' });
+                    }
+                }, 1000);
+            }
+        }
+
         function handleTimerInteraction(player) {
             const zone = player.zone; const otherPlayer = players.find(p => p.id !== player.id);
             function engagePadsForReady() {
@@ -3069,13 +3082,7 @@
                     player.status = 'readying'; updateVisuals(player, 'state-ready');
                     if (window.DCT_P2P && DCT_P2P.enabled) {
                         DCT_P2P.send({ type: 'STATE', status: 'readying' });
-                        clearTimeout(player.readyTimeout);
-                        player.readyTimeout = setTimeout(() => {
-                            if (player.status === 'readying') {
-                                player.status = 'set'; updateVisuals(player, 'state-set');
-                                DCT_P2P.send({ type: 'STATE', status: 'set' });
-                            }
-                        }, 300);
+                        if (DCT_P2P.isHost) checkOnlineSimultaneousReady();
                     } else if (otherPlayer.status === 'readying') {
                         clearTimeout(sharedReadyTimeout);
                         sharedReadyTimeout = setTimeout(() => {
@@ -3084,8 +3091,8 @@
                             }
                         }, 500);
                     }
-                } else if (e.type === 'mousedown' && player.status === 'inspecting') {
-                    // Single-mouse friendly: holding anywhere on the zone engages both pads
+                } else if (player.status === 'inspecting') {
+                    // Single-finger / single-mouse friendly: holding anywhere on the zone engages both pads
                     engagePadsForReady();
                     if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'inspecting-ready' });
                 } else if (player.status === 'solving') {
@@ -3103,7 +3110,7 @@
                 if (state.gameState !== 'playing' && player.status !== 'finished') { if (player.status === 'readying') { clearTimeout(sharedReadyTimeout); players.forEach(p => { p.status = 'idle'; updateVisuals(p, 'state-idle'); }); } return; }
                 if (player.status === 'readying') {
                     if (window.DCT_P2P && DCT_P2P.enabled) {
-                        clearTimeout(player.readyTimeout);
+                        clearTimeout(sharedReadyTimeout);
                         player.status = 'idle'; updateVisuals(player, 'state-idle');
                         DCT_P2P.send({ type: 'STATE', status: 'idle' });
                     } else {
@@ -3118,7 +3125,7 @@
                         players.forEach(p => { updateVisuals(p, 'state-inspecting'); startInspection(p); });
                     }
                 }
-                else if (e.type === 'mouseup' && player.status === 'inspecting-ready') {
+                else if (player.status === 'inspecting-ready') {
                     releasePadsAndReset();
                     startSolve(player);
                     if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'solving' });
@@ -3131,21 +3138,9 @@
                 if (window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
                 e.preventDefault(); e.stopPropagation();
                 if (player.status !== 'inspecting') return;
-                if (e.type === 'mousedown') {
-                    // Single-mouse friendly: clicking one pad with mouse engages both pads
-                    engagePadsForReady();
-                    if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'inspecting-ready' });
-                    return;
-                }
-                if (pad === 'top') player.touchPads.topHeld = true;
-                if (pad === 'bottom') player.touchPads.bottomHeld = true;
-                player.touchPads[pad].classList.add('touched');
-                if (player.touchPads.topHeld && player.touchPads.bottomHeld) {
-                    player.status = 'inspecting-ready';
-                    player.touchPads.top.classList.add('set');
-                    player.touchPads.bottom.classList.add('set');
-                    if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'inspecting-ready' });
-                }
+                // Single-finger / single-mouse friendly: holding either pad engages both pads
+                engagePadsForReady();
+                if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'inspecting-ready' });
             }
             function onPadPointerUp(e, pad) {
                 if (window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
@@ -5047,14 +5042,7 @@
                     updateVisuals(player, 'state-ready');
                     if (isOnline) {
                         emitState('readying');
-                        clearTimeout(player.readyTimeout);
-                        player.readyTimeout = setTimeout(() => {
-                            if (player.status === 'readying') {
-                                player.status = 'set';
-                                updateVisuals(player, 'state-set');
-                                emitState('set');
-                            }
-                        }, 300);
+                        if (DCT_P2P.isHost) checkOnlineSimultaneousReady();
                     } else if (otherPlayer.status === 'readying') {
                         clearTimeout(sharedReadyTimeout);
                         sharedReadyTimeout = setTimeout(() => {
@@ -5070,7 +5058,7 @@
                     player.status = 'idle';
                     updateVisuals(player, 'state-idle');
                     if (isOnline) {
-                        clearTimeout(player.readyTimeout);
+                        clearTimeout(sharedReadyTimeout);
                         emitState('idle');
                     } else {
                         clearTimeout(sharedReadyTimeout);
@@ -5823,8 +5811,14 @@
                         break;
                     case 'STATE':
                         if (!oppPlayer) break;
-                        if (msg.status === 'readying') { oppPlayer.status = 'readying'; updateVisuals(oppPlayer, 'state-ready'); }
-                        else if (msg.status === 'idle') { oppPlayer.status = 'idle'; updateVisuals(oppPlayer, 'state-idle'); }
+                        if (msg.status === 'readying') {
+                            oppPlayer.status = 'readying'; updateVisuals(oppPlayer, 'state-ready');
+                            if (DCT_P2P.isHost) checkOnlineSimultaneousReady();
+                        }
+                        else if (msg.status === 'idle') {
+                            clearTimeout(sharedReadyTimeout);
+                            oppPlayer.status = 'idle'; updateVisuals(oppPlayer, 'state-idle');
+                        }
                         else if (msg.status === 'set') { oppPlayer.status = 'set'; updateVisuals(oppPlayer, 'state-set'); }
                         else if (msg.status === 'inspecting') { updateVisuals(oppPlayer, 'state-inspecting'); startInspection(oppPlayer); }
                         else if (msg.status === 'inspecting-ready') {
@@ -5835,6 +5829,9 @@
                             oppPlayer.status = 'inspecting-ready';
                             startSolve(oppPlayer);
                         }
+                        break;
+                    case 'BOTH_SET':
+                        players.forEach(p => { p.status = 'set'; updateVisuals(p, 'state-set'); });
                         break;
                     case 'STOP':
                         if (!oppPlayer) break;
