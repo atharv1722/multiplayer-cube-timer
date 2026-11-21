@@ -290,16 +290,16 @@
             100% { top: 100%; opacity: 0; transform: scaleX(0); }
         }
 
-        /* --- 7. TOUCH PADS (Optimized & Matched to Single Cube V5) --- */
+        /* --- 7. TOUCH PADS (Single-Pad Inspection for Casual Play) --- */
         .inspection-pads {
             position: absolute; inset: 0;
-            display: none; flex-direction: column; justify-content: space-between;
+            display: none; flex-direction: column; justify-content: flex-end;
             padding: 12px; gap: 10px; z-index: 40; pointer-events: none;
         }
         .timer-zone.inspecting .inspection-pads, .timer-zone.state-inspecting .inspection-pads { display: flex; }
 
         .touch-pad {
-            height: 36%;
+            height: 34%;
             width: 100%; border-radius: 16px; pointer-events: auto;
             background: linear-gradient(rgba(15, 23, 42, 0.78), rgba(15, 23, 42, 0.78)), repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.03) 10px, rgba(255,255,255,0.03) 11px);
             border: 2px solid rgba(255, 255, 255, 0.1);
@@ -307,6 +307,7 @@
             display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;
             transition: transform 0.2s var(--ease-smooth), border-color 0.2s ease, background-color 0.2s ease;
         }
+        .touch-pad.touch-top { display: none; }
         .touch-pad::after {
             content: ""; width: 64px; height: 6px; border-radius: 4px;
             background-color: rgba(255, 255, 0, 0.16); box-shadow: 0 0 10px rgba(0,0,0,0.5);
@@ -3048,6 +3049,19 @@
             }
         }
 
+        function checkOnlineDNFReset() {
+            if (!window.DCT_P2P || !DCT_P2P.enabled || !DCT_P2P.isHost) return;
+            clearTimeout(sharedDNFDualResetTimeout);
+            if (players[0].status === 'resetting-dnf' && players[1].status === 'resetting-dnf') {
+                sharedDNFDualResetTimeout = setTimeout(() => {
+                    if (players[0].status === 'resetting-dnf' && players[1].status === 'resetting-dnf') {
+                        resetCurrentRound();
+                        DCT_P2P.send({ type: 'RESET_ROUND' });
+                    }
+                }, 1000);
+            }
+        }
+
         function checkOnlineSimultaneousReady() {
             if (!window.DCT_P2P || !DCT_P2P.enabled || !DCT_P2P.isHost) return;
             clearTimeout(sharedReadyTimeout);
@@ -3103,7 +3117,18 @@
                     stopSolve(player, e);
                 } else if (player.status === 'finished') {
                     const p1Last = players[0].solves[players[0].solves.length - 1]; const p2Last = players[1].solves[players[1].solves.length - 1]; const bothDNF = p1Last && p1Last.penalty === 'DNF' && p2Last && p2Last.penalty === 'DNF';
-                    if (bothDNF) { player.status = 'resetting-dnf'; updateVisuals(player, 'timer-resetting'); if (themeConfig.current === 'dynamic') document.body.classList.add('bg-resetting'); if (otherPlayer.status === 'resetting-dnf') { clearTimeout(sharedDNFDualResetTimeout); sharedDNFDualResetTimeout = setTimeout(() => { if (players.every(p => p.status === 'resetting-dnf')) { resetCurrentRound(); } }, 1000); } } else { player.status = 'cycling-penalty'; }
+                    if (bothDNF) {
+                        player.status = 'resetting-dnf';
+                        updateVisuals(player, 'timer-resetting');
+                        if (themeConfig.current === 'dynamic') document.body.classList.add('bg-resetting');
+                        if (window.DCT_P2P && DCT_P2P.enabled) {
+                            DCT_P2P.send({ type: 'STATE', status: 'resetting-dnf' });
+                            if (DCT_P2P.isHost) checkOnlineDNFReset();
+                        } else if (otherPlayer.status === 'resetting-dnf') {
+                            clearTimeout(sharedDNFDualResetTimeout);
+                            sharedDNFDualResetTimeout = setTimeout(() => { if (players.every(p => p.status === 'resetting-dnf')) { resetCurrentRound(); } }, 1000);
+                        }
+                    } else { player.status = 'cycling-penalty'; }
                 }
             }
             function onPointerUp(e) {
@@ -3134,7 +3159,19 @@
                     startSolve(player);
                     if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'solving' });
                 }
-                else if (player.status === 'resetting-dnf') { clearTimeout(sharedDNFDualResetTimeout); players.forEach(p => { if (p.status === 'resetting-dnf') { p.status = 'finished'; updateVisuals(p, 'state-finished'); updateFinishedDisplay(p); } }); document.body.classList.remove('bg-resetting'); }
+                else if (player.status === 'resetting-dnf') {
+                    clearTimeout(sharedDNFDualResetTimeout);
+                    if (window.DCT_P2P && DCT_P2P.enabled) {
+                        player.status = 'finished';
+                        updateVisuals(player, 'state-finished');
+                        updateFinishedDisplay(player);
+                        DCT_P2P.send({ type: 'STATE', status: 'cancel-reset' });
+                        if (!players.some(p => p.status === 'resetting-dnf')) document.body.classList.remove('bg-resetting');
+                    } else {
+                        players.forEach(p => { if (p.status === 'resetting-dnf') { p.status = 'finished'; updateVisuals(p, 'state-finished'); updateFinishedDisplay(p); } });
+                        document.body.classList.remove('bg-resetting');
+                    }
+                }
                 else if (player.status === 'cycling-penalty') { player.status = 'finished'; cyclePenalty(player); }
             }
             zone.addEventListener('mousedown', onPointerDown); zone.addEventListener('mouseup', onPointerUp); zone.addEventListener('touchstart', onPointerDown, { passive: false }); zone.addEventListener('touchend', onPointerUp);
@@ -5111,7 +5148,10 @@
                         player.status = 'resetting-dnf';
                         updateVisuals(player, 'timer-resetting');
                         if (themeConfig.current === 'dynamic') document.body.classList.add('bg-resetting');
-                        if (otherPlayer.status === 'resetting-dnf') {
+                        if (window.DCT_P2P && DCT_P2P.enabled) {
+                            DCT_P2P.send({ type: 'STATE', status: 'resetting-dnf' });
+                            if (DCT_P2P.isHost) checkOnlineDNFReset();
+                        } else if (otherPlayer.status === 'resetting-dnf') {
                             clearTimeout(sharedDNFDualResetTimeout);
                             sharedDNFDualResetTimeout = setTimeout(() => {
                                 if (players.every(p => p.status === 'resetting-dnf')) resetCurrentRound();
@@ -5126,6 +5166,7 @@
                         player.status = 'finished';
                         updateVisuals(player, 'state-finished');
                         updateFinishedDisplay(player);
+                        if (window.DCT_P2P && DCT_P2P.enabled) DCT_P2P.send({ type: 'STATE', status: 'cancel-reset' });
                         if (!players.some(p => p.status === 'resetting-dnf')) document.body.classList.remove('bg-resetting');
                     } else if (player.status === 'cycling-penalty') {
                         player.status = 'finished';
@@ -5894,7 +5935,23 @@
                         } else if (msg.status === 'solving') {
                             oppPlayer.status = 'inspecting-ready';
                             startSolve(oppPlayer);
+                        } else if (msg.status === 'resetting-dnf') {
+                            oppPlayer.status = 'resetting-dnf';
+                            updateVisuals(oppPlayer, 'timer-resetting');
+                            if (themeConfig.current === 'dynamic') document.body.classList.add('bg-resetting');
+                            if (DCT_P2P.isHost) checkOnlineDNFReset();
+                        } else if (msg.status === 'cancel-reset') {
+                            clearTimeout(sharedDNFDualResetTimeout);
+                            if (oppPlayer.status === 'resetting-dnf') {
+                                oppPlayer.status = 'finished';
+                                updateVisuals(oppPlayer, 'state-finished');
+                                updateFinishedDisplay(oppPlayer);
+                            }
+                            if (!players.some(p => p.status === 'resetting-dnf')) document.body.classList.remove('bg-resetting');
                         }
+                        break;
+                    case 'RESET_ROUND':
+                        resetCurrentRound();
                         break;
                     case 'BOTH_SET':
                         players.forEach(p => { p.status = 'set'; updateVisuals(p, 'state-set'); });
