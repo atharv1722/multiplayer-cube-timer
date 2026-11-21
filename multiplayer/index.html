@@ -153,6 +153,20 @@
             transform: scale(1.08);
         }
 
+        /* -- STATE: INSPECTING READY (Single-Pad Green Glow) -- */
+        .timer-zone.inspecting-ready {
+            background: radial-gradient(circle at 50% 50%, rgba(34, 197, 94, 0.24), rgba(15, 23, 42, 0.72)) !important;
+            border: 3px solid #22c55e !important;
+            box-shadow: inset 0 0 70px rgba(34, 197, 94, 0.32), 0 0 40px rgba(34, 197, 94, 0.35);
+        }
+        .timer-zone.inspecting-ready .time-display,
+        .timer-zone.inspecting-ready .text-6xl,
+        .timer-zone.inspecting-ready .text-8xl {
+            color: #4ade80 !important;
+            text-shadow: 0 0 30px rgba(34, 197, 94, 0.9);
+            transform: scale(1.06);
+        }
+
         /* -- STATE: INSPECTING (Fixed Neon) -- */
         .inspecting, .state-inspecting {
             background: radial-gradient(circle at 50% 50%, rgba(234, 179, 8, 0.14), rgba(15, 23, 42, 0.7)) !important;
@@ -290,13 +304,10 @@
             100% { top: 100%; opacity: 0; transform: scaleX(0); }
         }
 
-        /* --- 7. TOUCH PADS (Single-Pad Inspection for Casual Play) --- */
+        /* --- 7. TOUCH PADS (Hidden — Whole Timer Zone Acts as Single Pad) --- */
         .inspection-pads {
-            position: absolute; inset: 0;
-            display: none; flex-direction: column; justify-content: flex-end;
-            padding: 12px; gap: 10px; z-index: 40; pointer-events: none;
+            display: none !important;
         }
-        .timer-zone.inspecting .inspection-pads, .timer-zone.state-inspecting .inspection-pads { display: flex; }
 
         .touch-pad {
             height: 34%;
@@ -2762,7 +2773,7 @@
         // --- 6. CORE GAME LOGIC ---
         function updateVisuals(player, newState) {
             const zone = player.zone;
-            const states = [ 'state-idle', 'state-ready', 'state-set', 'state-inspecting', 'state-solving', 'state-finished', 'timer-ready', 'timer-set', 'timer-resetting', 'inspecting', 'penalty-plus2', 'penalty-dnf', 'timer-winner-active', 'pb-active', 'partial-l-idle', 'partial-r-idle', 'partial-l-stop', 'partial-r-stop' ];
+            const states = [ 'state-idle', 'state-ready', 'state-set', 'state-inspecting', 'inspecting-ready', 'state-solving', 'state-finished', 'timer-ready', 'timer-set', 'timer-resetting', 'inspecting', 'penalty-plus2', 'penalty-dnf', 'timer-winner-active', 'pb-active', 'partial-l-idle', 'partial-r-idle', 'partial-l-stop', 'partial-r-stop' ];
             zone.classList.remove(...states);
             const badges = zone.querySelectorAll('.pb-badge-text'); badges.forEach(b => b.remove());
             if (newState) zone.classList.add(newState);
@@ -3082,6 +3093,7 @@
                 player.touchPads.bottomHeld = true;
                 player.touchPads.top.classList.add('touched', 'set');
                 player.touchPads.bottom.classList.add('touched', 'set');
+                player.zone.classList.add('inspecting-ready');
                 player.status = 'inspecting-ready';
             }
             function releasePadsAndReset() {
@@ -3089,6 +3101,7 @@
                 player.touchPads.bottomHeld = false;
                 player.touchPads.top.classList.remove('touched', 'set');
                 player.touchPads.bottom.classList.remove('touched', 'set');
+                player.zone.classList.remove('inspecting-ready');
             }
             function onPointerDown(e) {
                 if (window.DCT_P2P && DCT_P2P.enabled && player.id !== (DCT_P2P.isHost ? 1 : 2)) return;
@@ -5123,11 +5136,13 @@
                         pads.topHeld = true; pads.bottomHeld = true;
                         pads.top.classList.add('touched', 'set');
                         pads.bottom.classList.add('touched', 'set');
+                        zone.classList.add('inspecting-ready');
                         if (player.status !== 'inspecting-ready') {
                             player.status = 'inspecting-ready';
                             emitState('inspecting-ready');
                         }
                     } else if (player.status === 'inspecting-ready') {
+                        zone.classList.remove('inspecting-ready');
                         startSolve(player);
                         emitState('solving');
                     }
@@ -5930,6 +5945,7 @@
                         else if (msg.status === 'inspecting') { updateVisuals(oppPlayer, 'state-inspecting'); startInspection(oppPlayer); }
                         else if (msg.status === 'inspecting-ready') {
                             oppPlayer.status = 'inspecting-ready';
+                            oppPlayer.zone.classList.add('inspecting-ready');
                             oppPlayer.touchPads.top.classList.add('touched', 'set');
                             oppPlayer.touchPads.bottom.classList.add('touched', 'set');
                         } else if (msg.status === 'solving') {
