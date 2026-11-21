@@ -1527,9 +1527,13 @@
                         <div class="space-y-3">
                             <input type="text" id="online-guest-name" placeholder="YOUR NAME (GUEST)" class="w-full bg-black/50 border border-cyan-500/30 text-white font-bold text-center py-3 px-4 rounded-xl focus:outline-none focus:border-cyan-500 text-sm uppercase tracking-wider" />
                             <input type="text" id="online-room-code-input" maxlength="6" placeholder="ROOM CODE (E.G. A7K9P)" class="w-full bg-black/50 border border-cyan-500/30 text-cyan-300 font-mono font-black text-center py-2.5 px-4 rounded-xl focus:outline-none focus:border-cyan-500 text-base uppercase tracking-[0.25em]" />
-                            <button id="join-room-btn" type="button" class="w-full py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold uppercase tracking-wider text-xs transition-all shadow-lg hover:shadow-cyan-500/30">
+                            <button id="join-room-btn" type="button" class="w-full py-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold uppercase tracking-wider text-xs transition-all shadow-lg hover:shadow-cyan-500/30 flex items-center justify-center gap-2 disabled:opacity-75 disabled:cursor-wait">
                                 Connect &amp; Play
                             </button>
+                            <div id="p2p-join-status" class="hidden items-center justify-center gap-2 text-[11px] font-mono text-cyan-300 bg-cyan-500/10 border border-cyan-500/30 rounded-lg px-3 py-2">
+                                <span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0"></span>
+                                <span id="p2p-join-status-text">Connecting...</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -5661,13 +5665,46 @@
             const roomCodeInput = document.getElementById('online-room-code-input');
             const createRoomBtn = document.getElementById('create-room-btn');
             const joinRoomBtn = document.getElementById('join-room-btn');
+            const joinStatusBox = document.getElementById('p2p-join-status');
+            const joinStatusText = document.getElementById('p2p-join-status-text');
             const cancelRoomBtn = document.getElementById('cancel-room-btn');
             const copyInviteBtn = document.getElementById('copy-invite-btn');
             const inviteLinkInput = document.getElementById('invite-link-input');
             const waitingCodeEl = document.getElementById('waiting-room-code');
             const handshakeLabel = document.getElementById('handshake-players-label');
+            let hostLaunched = false;
+
+            const spinnerSVG = `<svg class="animate-spin h-4 w-4 text-white shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+
+            const setJoinLoading = (isLoading, statusMsg) => {
+                if (joinRoomBtn) {
+                    joinRoomBtn.disabled = isLoading;
+                    joinRoomBtn.innerHTML = isLoading ? `${spinnerSVG}<span>Connecting...</span>` : 'Connect &amp; Play';
+                }
+                if (joinStatusBox) {
+                    if (isLoading) {
+                        joinStatusBox.classList.remove('hidden');
+                        joinStatusBox.classList.add('flex');
+                        if (joinStatusText && statusMsg) joinStatusText.textContent = statusMsg;
+                    } else {
+                        joinStatusBox.classList.add('hidden');
+                        joinStatusBox.classList.remove('flex');
+                    }
+                }
+            };
+
+            const setCreateLoading = (isLoading) => {
+                if (createRoomBtn) {
+                    createRoomBtn.disabled = isLoading;
+                    createRoomBtn.innerHTML = isLoading
+                        ? `<span class="inline-flex items-center justify-center gap-2">${spinnerSVG}<span>Creating Room...</span></span>`
+                        : 'Create Room &amp; Get Link';
+                }
+            };
 
             const showError = (msg) => {
+                setJoinLoading(false);
+                setCreateLoading(false);
                 if (!errorMsg) return;
                 errorMsg.textContent = msg;
                 errorMsg.classList.remove('hidden');
@@ -5676,6 +5713,8 @@
 
             const switchTab = (mode) => {
                 clearError();
+                setJoinLoading(false);
+                setCreateLoading(false);
                 if (mode === 'online') {
                     tabOnline.className = 'py-2 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all bg-indigo-600 text-white shadow-[0_0_20px_rgba(99,102,241,0.35)]';
                     tabLocal.className = 'py-2 px-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all text-gray-400 hover:text-white';
@@ -5705,6 +5744,8 @@
             if (createRoomBtn) {
                 createRoomBtn.addEventListener('click', () => {
                     clearError();
+                    hostLaunched = false;
+                    setCreateLoading(true);
                     DCT_P2P.createRoom(hostNameInput ? hostNameInput.value : 'Player 1');
                 });
             }
@@ -5714,12 +5755,26 @@
                     clearError();
                     const code = roomCodeInput ? roomCodeInput.value.trim().toUpperCase() : '';
                     if (!code) { showError('Please enter a room code.'); return; }
+                    setJoinLoading(true, `Connecting to room ${code}...`);
                     DCT_P2P.joinRoom(code, guestNameInput ? guestNameInput.value : 'Player 2');
                 });
             }
 
+            [guestNameInput, roomCodeInput].forEach(inp => {
+                if (inp) {
+                    inp.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter' && joinRoomBtn && !joinRoomBtn.disabled) {
+                            e.preventDefault();
+                            joinRoomBtn.click();
+                        }
+                    });
+                }
+            });
+
             if (cancelRoomBtn) {
                 cancelRoomBtn.addEventListener('click', () => {
+                    hostLaunched = false;
+                    setCreateLoading(false);
                     DCT_P2P.cleanup();
                     waitingStage.classList.add('hidden');
                     waitingStage.classList.remove('flex');
@@ -5743,11 +5798,18 @@
             }
 
             DCT_P2P.on('room-created', ({ roomCode, inviteUrl }) => {
+                setCreateLoading(false);
                 setupStage.classList.add('hidden');
                 waitingStage.classList.remove('hidden');
                 waitingStage.classList.add('flex');
                 if (waitingCodeEl) waitingCodeEl.textContent = roomCode;
                 if (inviteLinkInput) inviteLinkInput.value = inviteUrl;
+            });
+
+            DCT_P2P.on('status', (statusMsg) => {
+                if (!DCT_P2P.isHost && joinStatusText) {
+                    setJoinLoading(true, statusMsg);
+                }
             });
 
             DCT_P2P.on('error', (msg) => showError(msg));
@@ -5787,11 +5849,15 @@
                         if (DCT_P2P.isHost) {
                             DCT_P2P.oppName = msg.name || 'Player 2';
                             DCT_P2P.send({ type: 'WELCOME', hostName: DCT_P2P.myName, gameMode: state.gameMode });
-                            launchOnlineMatch(DCT_P2P.myName, DCT_P2P.oppName);
+                            if (!hostLaunched) {
+                                hostLaunched = true;
+                                launchOnlineMatch(DCT_P2P.myName, DCT_P2P.oppName);
+                            }
                         }
                         break;
                     case 'WELCOME':
                         if (!DCT_P2P.isHost) {
+                            setJoinLoading(false);
                             DCT_P2P.oppName = msg.hostName || 'Player 1';
                             if (msg.gameMode) setGameMode(msg.gameMode);
                             launchOnlineMatch(DCT_P2P.oppName, DCT_P2P.myName);

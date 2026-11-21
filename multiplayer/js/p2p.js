@@ -2,21 +2,20 @@
 (function (global) {
     const PEER_PREFIX = 'dct-v5-room-';
     const ICE_CONFIG = {
+        iceCandidatePoolSize: 10,
         iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun.cloudflare.com:3478' },
             {
-                urls: 'turn:openrelay.metered.ca:80',
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            },
-            {
-                urls: 'turn:openrelay.metered.ca:443',
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            },
-            {
-                urls: 'turns:openrelay.metered.ca:443',
+                urls: [
+                    'turn:openrelay.metered.ca:80',
+                    'turn:openrelay.metered.ca:80?transport=tcp',
+                    'turn:openrelay.metered.ca:443',
+                    'turn:openrelay.metered.ca:443?transport=tcp',
+                    'turns:openrelay.metered.ca:443?transport=tcp'
+                ],
                 username: 'openrelayproject',
                 credential: 'openrelayproject'
             }
@@ -42,6 +41,11 @@
         myName: 'Player 1',
         oppName: 'Player 2',
         handlers: {},
+        _connectTimer: null,
+        _signalingTimer: null,
+        _helloTimer: null,
+        _retryTimer: null,
+        _welcomed: false,
 
         on(event, fn) {
             this.handlers[event] = fn;
@@ -80,9 +84,18 @@
                 return;
             }
 
+            this.emit('status', 'Creating room on signaling server...');
             this.peer = new Peer(peerId, { debug: 0, config: ICE_CONFIG });
 
+            this._signalingTimer = setTimeout(() => {
+                if (this.peer && !this.peer.open && !this.peer.destroyed) {
+                    this.emit('error', 'Could not reach PeerJS signaling server. Check your internet/firewall and try again.');
+                    this.cleanup();
+                }
+            }, 12000);
+
             this.peer.on('open', () => {
+                clearTimeout(this._signalingTimer);
                 this.emit('room-created', {
                     roomCode: this.roomCode,
                     inviteUrl: this.buildInviteURL(this.roomCode)
@@ -105,6 +118,7 @@
             });
 
             this.peer.on('error', (err) => {
+                clearTimeout(this._signalingTimer);
                 this.emit('error', err.message || 'Connection error');
             });
         },
@@ -113,6 +127,7 @@
             this.cleanup();
             this.enabled = true;
             this.isHost = false;
+            this._welcomed = false;
             this.roomCode = roomCode.trim().toUpperCase();
             this.myName = (guestName || 'Player 2').trim() || 'Player 2';
 
@@ -121,30 +136,81 @@
                 return;
             }
 
+            this.emit('status', 'Connecting to signaling server...');
             this.peer = new Peer(undefined, { debug: 0, config: ICE_CONFIG });
+
             const maxRetries = 3;
             let retryCount = 0;
+            let finished = false;
 
-            const attemptConnect = () => {
-                if (!this.peer || this.peer.destroyed || this.connected) return;
-                this.conn = this.peer.connect(PEER_PREFIX + this.roomCode, { reliable: true });
-                this.bindConnectionEvents();
+            const failAll = (msg) => {
+                if (finished) return;
+                finished = true;
+                this.cleanup();
+                this.emit('error', msg);
             };
 
+            const scheduleRetry = (reason) => {
+                if (finished || !this.peer || this.peer.destroyed || this.connected) return;
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    this.emit('status', `${reason} Retrying (${retryCount}/${maxRetries})...`);
+                    if (this.conn) {
+                        try { this.conn.close(); } catch (e) {}
+                        this.conn = null;
+                    }
+                    clearTimeout(this._retryTimer);
+                    this._retryTimer = setTimeout(attemptConnect, 1800);
+                } else {
+                    failAll('Could not connect to host. Make sure the room code is right, the host tab is open, and try again.');
+                }
+            };
+
+            const attemptConnect = () => {
+                if (finished || !this.peer || this.peer.destroyed || this.connected) return;
+                const attemptLabel = retryCount > 0 ? ` (Attempt ${retryCount + 1}/${maxRetries + 1})` : '';
+                this.emit('status', `Connecting to room ${this.roomCode}${attemptLabel}...`);
+                this.conn = this.peer.connect(PEER_PREFIX + this.roomCode, { reliable: true });
+                this.bindConnectionEvents();
+
+                clearTimeout(this._connectTimer);
+                this._connectTimer = setTimeout(() => {
+                    if (!this.connected && !finished) {
+                        scheduleRetry('Connection timed out.');
+                    }
+                }, 9000);
+
+                if (this.conn && this.conn.peerConnection) {
+                    this.conn.peerConnection.oniceconnectionstatechange = () => {
+                        const state = this.conn && this.conn.peerConnection ? this.conn.peerConnection.iceConnectionState : '';
+                        if (state === 'checking') {
+                            this.emit('status', 'Negotiating peer-to-peer connection...');
+                        } else if (state === 'failed' && !this.connected) {
+                            clearTimeout(this._connectTimer);
+                            scheduleRetry('Network NAT blocked.');
+                        }
+                    };
+                }
+            };
+
+            this._signalingTimer = setTimeout(() => {
+                if (this.peer && !this.peer.open && !finished) {
+                    failAll('Could not reach signaling server. Check your internet connection.');
+                }
+            }, 12000);
+
             this.peer.on('open', () => {
+                clearTimeout(this._signalingTimer);
                 attemptConnect();
             });
 
             this.peer.on('error', (err) => {
+                clearTimeout(this._signalingTimer);
+                clearTimeout(this._connectTimer);
                 if (err.type === 'peer-unavailable') {
-                    if (retryCount < maxRetries) {
-                        retryCount++;
-                        setTimeout(attemptConnect, 2000);
-                    } else {
-                        this.emit('error', 'Room not found or host is offline. Make sure the host tab is still open!');
-                    }
+                    scheduleRetry(`Room ${this.roomCode} not ready.`);
                 } else {
-                    this.emit('error', err.message || 'Could not join room. Check the code or host status.');
+                    failAll(err.message || 'Could not join room. Check the code or host status.');
                 }
             });
         },
@@ -153,24 +219,49 @@
             if (!this.conn) return;
 
             this.conn.on('open', () => {
+                clearTimeout(this._connectTimer);
+                clearTimeout(this._retryTimer);
                 this.connected = true;
+                this.emit('status', 'Connected! Syncing players...');
                 if (!this.isHost) {
-                    this.send({ type: 'HELLO', name: this.myName });
+                    let helloAttempts = 0;
+                    const sendHello = () => {
+                        if (!this.connected || this._welcomed || !this.conn || !this.conn.open) {
+                            clearInterval(this._helloTimer);
+                            return;
+                        }
+                        helloAttempts++;
+                        this.send({ type: 'HELLO', name: this.myName });
+                        if (helloAttempts >= 15) clearInterval(this._helloTimer);
+                    };
+                    sendHello();
+                    clearInterval(this._helloTimer);
+                    this._helloTimer = setInterval(sendHello, 500);
                 }
             });
 
             this.conn.on('data', (msg) => {
                 if (!msg || !msg.type) return;
+                if (msg.type === 'WELCOME') {
+                    this._welcomed = true;
+                    clearInterval(this._helloTimer);
+                }
                 this.emit('message', msg);
             });
 
             this.conn.on('close', () => {
+                const wasConnected = this.connected;
                 this.connected = false;
-                this.emit('disconnected');
+                clearInterval(this._helloTimer);
+                if (wasConnected) {
+                    this.emit('disconnected');
+                }
             });
 
             this.conn.on('error', () => {
-                this.emit('error', 'Peer connection error');
+                if (!this.connected) {
+                    this.emit('error', 'Peer connection error');
+                }
             });
         },
 
@@ -185,6 +276,11 @@
         },
 
         cleanup() {
+            clearTimeout(this._connectTimer);
+            clearTimeout(this._signalingTimer);
+            clearTimeout(this._retryTimer);
+            clearInterval(this._helloTimer);
+            this._welcomed = false;
             this.connected = false;
             if (this.conn) {
                 try { this.conn.close(); } catch (e) {}
